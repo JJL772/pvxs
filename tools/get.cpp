@@ -7,6 +7,7 @@
 #include <iostream>
 #include <list>
 #include <atomic>
+#include <iomanip>
 
 #include <cstring>
 
@@ -27,16 +28,22 @@ void usage(const char* argv0)
 {
     std::cerr<<"Usage: "<<argv0<<" [opts] [pvname ...]\n"
                "\n"
+               "Options:\n"
                "  -h        Show this message.\n"
                "  -V        Print version and exit.\n"
                "  -r <req>  pvRequest condition.\n"
-               "  -v        Make more noise.\n"
-               "  -d        Shorthand for $PVXS_LOG=\"pvxs.*=DEBUG\".  Make a lot of noise.\n"
                "  -w <sec>  Operation timeout in seconds.  default 5 sec.\n"
                "  -# <cnt>  Maximum number of elements to print for each array field.\n"
                "            Set to zero 0 for unlimited.\n"
                "            Default: 20\n"
-               "  -F <fmt>  Output format mode: delta, tree\n"
+               "  -F <fmt>  Output format mode: delta, tree. Default: delta\n"
+               "  -t        Terse mode, only display value without name or type\n"
+               "  -a        Wide mode, display in \"name timestamp value stat sevr\" format\n"
+               "\n"
+               "Debug options:\n"
+               "  -v        Make more noise.\n"
+               "  -d        Shorthand for $PVXS_LOG=\"pvxs.*=DEBUG\".  Make a lot of noise.\n"
+               "\n"
                ;
 }
 
@@ -47,14 +54,14 @@ int main(int argc, char *argv[])
     try {
         logger_config_env(); // from $PVXS_LOG
         double timeout = 5.0;
-        bool verbose = false;
+        bool verbose = false, terse = false, wide = false;
         std::string request;
         Value::Fmt::format_t format = Value::Fmt::Delta;
         auto arrLimit = uint64_t(-1);
 
         {
             int opt;
-            while ((opt = getopt(argc, argv, "hVvdw:r:#:F:")) != -1) {
+            while ((opt = getopt(argc, argv, "ahtVvdw:r:#:F:")) != -1) {
                 switch(opt) {
                 case 'h':
                     usage(argv[0]);
@@ -77,11 +84,19 @@ int main(int argc, char *argv[])
                 case '#':
                     arrLimit = parseTo<uint64_t>(optarg);
                     break;
+                case 't':
+                    terse = true;
+                    break;
+                case 'a':
+                    wide = true;
+                    break;
                 case 'F':
                     if(std::strcmp(optarg, "tree")==0) {
                         format = Value::Fmt::Tree;
                     } else if(std::strcmp(optarg, "delta")==0) {
                         format = Value::Fmt::Delta;
+                    } else if(std::strcmp(optarg, "value") == 0) {
+                        format = Value::Fmt::Val;
                     } else {
                         std::cerr<<"Warning: ignoring unknown format '"<<optarg<<"'\n";
                     }
@@ -91,6 +106,18 @@ int main(int argc, char *argv[])
                     std::cerr<<"\nUnknown argument: "<<char(opt)<<std::endl;
                     return 1;
                 }
+            }
+        }
+        
+        // Check for incompatible options
+        if (format != Value::Fmt::Val) {
+            if (wide) {
+                std::cerr << "-a (wide mode) can only be used with 'value' formatting mode\n";
+                return 1;
+            }
+            else if (terse) {
+                std::cerr << "-t (terse mode) can only be used with 'value' formatting mode\n";
+                return 1;
             }
         }
 
@@ -108,12 +135,20 @@ int main(int argc, char *argv[])
 
             ops.push_back(ctxt.get(argv[n])
                           .pvRequest(request)
-                          .result([&argv, n, &remaining, &done, format, arrLimit](client::Result&& result) {
-                              std::cout<<argv[n]<<"\n";
+                          .result([&argv, n, &remaining, &done, wide, format, arrLimit, terse](client::Result&& result) {
+                              if (!terse) {
+                                // When in value mode, we want to display PV and value on the same line
+                                if (format != Value::Fmt::Val)
+                                    std::cout << argv[n] << "\n";
+                                else
+                                    std::cout << std::setw(30) << std::left << argv[n] << " ";
+                              }
+
                               Indented I(std::cout);
                               std::cout<<result()
                                          .format()
                                          .format(format)
+                                         .wideMode(wide)
                                          .arrayLimit(arrLimit);
                               std::cout.flush();
 

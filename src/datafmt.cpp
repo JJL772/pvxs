@@ -6,6 +6,9 @@
 
 #include "dataimpl.h"
 
+#include <epicsTime.h>
+#include <alarm.h>
+#include <alarmString.h>
 namespace pvxs {
 
 namespace {
@@ -307,6 +310,153 @@ struct FmtTree {
     }
 };
 
+/** 
+ * @brief Display name+value only, not the full structure
+ */
+struct FmtValue {
+    std::ostream& stream;
+    const Value::Fmt& fmt;
+    
+    /**
+     * @brief Display timestamp
+     */
+    void show_timestamp(const Value& field) {
+        epicsTimeStamp ts = {};
+        timespec tv = {};
+
+        auto secsField = field.lookup("timeStamp.secondsPastEpoch");
+        if (secsField)
+            tv.tv_sec = secsField.as<int64_t>();
+        auto nsecsField = field.lookup("timeStamp.nanoseconds");
+        if (nsecsField)
+            tv.tv_nsec = nsecsField.as<int32_t>();
+
+        epicsTimeFromTimespec(&ts, &tv);
+
+        char buf[128];
+        epicsTimeToStrftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S.%06f", &ts);
+        stream<<buf<<" ";
+    }
+    
+    /**
+     * @brief Show alarms if status != NO_ALARM
+     */
+    void maybe_show_alarms(const Value& field) {
+        auto alarmFld = field.lookup("alarm.status");
+        if (alarmFld && alarmFld.as<int32_t>() == 0)
+            return;
+
+        std::string msg{"INVALID"};
+        auto msgFld = field.lookup("alarm.message");
+        if (msgFld && msgFld.type() == TypeCode::String)
+            msg = msgFld.as<std::string>();
+        
+        int sevr = epicsSevNone;
+        auto alarmSevr = field.lookup("alarm.severity");
+        if (alarmSevr)
+            sevr = clamp(alarmSevr.as<int>(), firstEpicsAlarmSev, lastEpicsAlarmSev);
+        
+        stream << " " << msg << " " << epicsAlarmSeverityStrings[sevr];
+    }
+
+    /**
+     * @brief Show a simple scalar or array value
+     */
+    void show_value(const Value& field) {
+        switch(field.type().code) {
+        case TypeCode::Bool:
+            stream << field.as<bool>();
+            break;
+        case TypeCode::Int8:
+        case TypeCode::Int16:
+        case TypeCode::Int32:
+        case TypeCode::Int64:
+            stream << field.as<int64_t>();
+            break;
+        case TypeCode::UInt8:
+        case TypeCode::UInt16:
+        case TypeCode::UInt32:
+        case TypeCode::UInt64:
+            stream << field.as<uint64_t>();
+            break;
+        case TypeCode::Float32:
+        case TypeCode::Float64:
+            stream << field.as<double>();
+            break;
+        case TypeCode::String:
+            stream << "\"" << field.as<std::string>() << "\"";
+            break;
+        case TypeCode::BoolA:
+        case TypeCode::Int8A:
+        case TypeCode::Int16A:
+        case TypeCode::Int32A:
+        case TypeCode::Int64A:
+        case TypeCode::UInt8A:
+        case TypeCode::UInt16A:
+        case TypeCode::UInt32A:
+        case TypeCode::UInt64A:
+        case TypeCode::Float32A:
+        case TypeCode::Float64A:
+        case TypeCode::StringA:
+            stream << field.as<shared_array<const void>>().format()
+                .limit(fmt._limit);
+            break;
+        }
+    }
+    
+    /**
+     * @brief Show an enum value (string)
+     */
+    void show_enum_value(const Value& field) {
+        auto indexField = field.lookup("index");
+        if (!indexField || indexField.type().kind() != Kind::Integer)
+            return;
+        auto index = indexField.as<int32_t>();
+        
+        auto choices = field.lookup("choices");
+        if (!choices || choices.type() != TypeCode::StringA) {
+            stream << index;
+            return;
+        }
+
+        auto array = choices.as<shared_array<const void>>();
+        if (index < 0 || size_t(index) >= array.size()) {
+            stream << "";
+            return;
+        }
+        stream << array.castTo<const std::string>().at(index);
+    }
+    
+    /**
+     * @brief Shows a PV's value field and some other relevant fields
+     * What is shown changes based on the NT type
+     */
+    void show(const Value& field) {
+        const bool isScalar = field.idStartsWith("epics:nt/NTScalar");
+        const bool isEnum = field.idStartsWith("epics:nt/NTEnum");
+
+        if (isScalar || isEnum) {
+            auto val = field.lookup("value");
+            if (!val)
+                return;
+
+            if (fmt._wideMode)
+                show_timestamp(field);
+
+            // Display actual value field
+            if (isScalar)
+                show_value(val);
+            else if (isEnum)
+                show_enum_value(val);
+
+            if (fmt._wideMode)
+                maybe_show_alarms(field);
+                
+            stream << "\n";
+        }
+    }
+};
+
 } // namespace
 
 std::ostream& operator<<(std::ostream& strm, const Value::Fmt& fmt)
@@ -318,6 +468,9 @@ std::ostream& operator<<(std::ostream& strm, const Value::Fmt& fmt)
         break;
     case Value::Fmt::Delta:
         FmtDelta{strm, fmt}.top("", *fmt.top, true);
+        break;
+    case Value::Fmt::Val:
+        FmtValue{strm, fmt}.show(*fmt.top);
         break;
     default:
         strm<<"<Unknown Value format()>\n";

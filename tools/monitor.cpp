@@ -42,15 +42,21 @@ void usage(const char* argv0)
 {
     std::cerr<<"Usage: "<<argv0<<" [opts] [pvname ...]\n"
                "\n"
+               "Options:\n"
                "  -h        Show this message.\n"
                "  -V        Print version and exit.\n"
                "  -r <req>  pvRequest condition.\n"
-               "  -v        Make more noise.\n"
-               "  -d        Shorthand for $PVXS_LOG=\"pvxs.*=DEBUG\".  Make a lot of noise.\n"
                "  -# <cnt>  Maximum number of elements to print for each array field.\n"
                "            Set to zero 0 for unlimited.\n"
                "            Default: 20\n"
-               "  -F <fmt>  Output format mode: delta, tree\n"
+               "  -F <fmt>  Output format mode: delta, tree, value. Default: value\n"
+               "  -t        Terse mode, only display value without name or type\n"
+               "  -a        Wide mode, display in \"name timestamp value stat sevr\" format\n"
+               "\n"
+               "Debug options:\n"
+               "  -v        Make more noise.\n"
+               "  -d        Shorthand for $PVXS_LOG=\"pvxs.*=DEBUG\".  Make a lot of noise.\n"
+               "\n"
                ;
 }
 
@@ -60,14 +66,14 @@ int main(int argc, char *argv[])
 {
     try {
         logger_config_env(); // from $PVXS_LOG
-        bool verbose = false;
+        bool verbose = false, terse = false, wide = false;
         std::string request;
-        Value::Fmt::format_t format = Value::Fmt::Delta;
+        Value::Fmt::format_t format = Value::Fmt::Val;
         auto arrLimit = uint64_t(-1);
 
         {
             int opt;
-            while ((opt = getopt(argc, argv, "hVvdr:#:F:")) != -1) {
+            while ((opt = getopt(argc, argv, "athVvdr:#:F:")) != -1) {
                 switch(opt) {
                 case 'h':
                     usage(argv[0]);
@@ -88,11 +94,19 @@ int main(int argc, char *argv[])
                 case '#':
                     arrLimit = parseTo<uint64_t>(optarg);
                     break;
+                case 'a':
+                    wide = true;
+                    break;
+                case 't':
+                    terse = true;
+                    break;
                 case 'F':
                     if(std::strcmp(optarg, "tree")==0) {
                         format = Value::Fmt::Tree;
                     } else if(std::strcmp(optarg, "delta")==0) {
                         format = Value::Fmt::Delta;
+                    } else if(std::strcmp(optarg, "value") == 0) {
+                        format = Value::Fmt::Val;
                     } else {
                         std::cerr<<"Warning: ignoring unknown format '"<<optarg<<"'\n";
                     }
@@ -102,6 +116,18 @@ int main(int argc, char *argv[])
                     std::cerr<<"\nUnknown argument: "<<char(opt)<<std::endl;
                     return 1;
                 }
+            }
+        }
+
+        // Check for incompatible options
+        if (format != Value::Fmt::Val) {
+            if (wide) {
+                std::cerr << "-a (wide mode) can only be used with 'value' formatting mode\n";
+                return 1;
+            }
+            else if (terse) {
+                std::cerr << "-t (terse mode) can only be used with 'value' formatting mode\n";
+                return 1;
             }
         }
 
@@ -156,10 +182,13 @@ int main(int argc, char *argv[])
                 }
                 log_info_printf(app, "%s POP empty\n", name.c_str());
 
-                std::cout<<name<<"\n";
+                if (!terse)
+                    std::cout<<name<<"\n";
+
                 Indented I(std::cout);
                 std::cout<<update.format()
                            .format(format)
+                           .wideMode(wide)
                            .arrayLimit(arrLimit);
                 std::cout.flush();
 

@@ -782,8 +782,11 @@ public:
         enum format_t {
             Tree,
             Delta,
+            Val,
         } _format = Tree;
         bool _showValue = true;
+        bool _valueOnly = false;
+        bool _wideMode = false;
 
         Fmt(const Value* top) :top(top) {}
         //! Show Value in tree/struct format
@@ -796,6 +799,10 @@ public:
         Fmt& showValue(bool v) { _showValue = v; return *this; }
         //! When non-zero, arrays output will be truncated with "..." after cnt elements.
         Fmt& arrayLimit(size_t cnt) { _limit = cnt; return *this; }
+        //! Only display value
+        Fmt& valueOnly(bool v) { _valueOnly = v; return *this; }
+        //! In Val mode, whether to display data in "timestamp value stat sevr" format
+        Fmt& wideMode(bool v) { _wideMode = v; return *this; }
     };
     /** Configurable printing via std::ostream
      *

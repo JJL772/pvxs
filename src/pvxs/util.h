@@ -190,6 +190,14 @@ std::ostream& target_information(std::ostream&);
 PVXS_API
 std::ostream& version_information(std::ostream&);
 
+/** Clamp v in range [minv, maxv]
+ * @returns clamped value
+ */
+template<typename T, typename A, typename B>
+inline constexpr T clamp(const T& v, const A& minv, const B& maxv) {
+    return (v < minv ? minv : (v > maxv ? maxv : v));
+}
+
 /** Thread-safe, bounded, multi-producer, multi-consumer FIFO queue.
  *
  * Queue value_type must be movable.  If T is also copy constructable,
