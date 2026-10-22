@@ -310,6 +310,18 @@ struct FmtTree {
     }
 };
 
+constexpr int NUM_PVA_ALARM_STATUSES = 8;
+static constexpr const char* pvaAlarmStatusStrings[NUM_PVA_ALARM_STATUSES] = {
+    "NO_STATUS",
+    "DEVICE",
+    "DRIVER",
+    "RECORD",
+    "DB",
+    "CONF",
+    "UNDEFINED",
+    "CLIENT",
+};
+
 /** 
  * @brief Display name+value only, not the full structure
  */
@@ -334,7 +346,7 @@ struct FmtValue {
         epicsTimeFromTimespec(&ts, &tv);
 
         char buf[128];
-        epicsTimeToStrftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S.%06f", &ts);
+        epicsTimeToStrftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S.%03f", &ts);
         stream << buf << " ";
     }
     
@@ -345,9 +357,9 @@ struct FmtValue {
     void maybe_show_alarms(const Value& field) {
         int alarmCond = 0;
         auto alarmFld = field.lookup("alarm.status");
-        if (alarmFld && (alarmCond = alarmFld.as<int32_t>()) == epicsAlarmNone)
+        if (alarmFld && (alarmCond = alarmFld.as<int32_t>()) == 0)
             return;
-        alarmCond = clamp(alarmCond, firstEpicsAlarmCond, lastEpicsAlarmCond);
+        alarmCond = clamp(alarmCond, 0, NUM_PVA_ALARM_STATUSES);
 
         std::string msg;
         auto msgFld = field.lookup("alarm.message");
@@ -360,7 +372,7 @@ struct FmtValue {
             sevr = clamp(alarmSevr.as<int>(), firstEpicsAlarmSev, lastEpicsAlarmSev);
 
         stream << " " << epicsAlarmSeverityStrings[sevr]
-               << " " << epicsAlarmConditionStrings[alarmCond] << " ";
+               << " " << pvaAlarmStatusStrings[alarmCond] << " ";
 
         if (!msg.empty())
             stream << msg << " ";

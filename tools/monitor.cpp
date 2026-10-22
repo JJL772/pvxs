@@ -182,8 +182,8 @@ int main(int argc, char *argv[])
                 remaining--;
 
             }catch(client::Connected& conn) {
-                std::cerr<<conn.time<<" "<<name.c_str()<<" Connected to "<<conn.peerName<<"\n";
                 if(app.test(Level::Debug)) {
+                    std::cerr<<conn.time<<" "<<name.c_str()<<" Connected to "<<conn.peerName<<"\n";
                     client::SubscriptionStat stats;
                     mon->stats(stats);
                     std::cerr<<name.c_str()<<" queueSize="<<stats.limitQueue<<"\n";
