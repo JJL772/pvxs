@@ -36,9 +36,8 @@ void usage(const char* argv0)
                "  -# <cnt>  Maximum number of elements to print for each array field.\n"
                "            Set to zero 0 for unlimited.\n"
                "            Default: 20\n"
-               "  -F <fmt>  Output format mode: delta, tree. Default: delta\n"
+               "  -F <fmt>  Output format mode: value, delta, tree. Default: value\n"
                "  -t        Terse mode, only display value without name or type\n"
-               "  -a        Wide mode, display in \"name timestamp value stat sevr\" format\n"
                "\n"
                "Debug options:\n"
                "  -v        Make more noise.\n"
@@ -56,12 +55,12 @@ int main(int argc, char *argv[])
         double timeout = 5.0;
         bool verbose = false, terse = false, wide = false;
         std::string request;
-        Value::Fmt::format_t format = Value::Fmt::Delta;
+        Value::Fmt::format_t format = Value::Fmt::Val;
         auto arrLimit = uint64_t(-1);
 
         {
             int opt;
-            while ((opt = getopt(argc, argv, "ahtVvdw:r:#:F:")) != -1) {
+            while ((opt = getopt(argc, argv, "htVvdw:r:#:F:")) != -1) {
                 switch(opt) {
                 case 'h':
                     usage(argv[0]);
@@ -87,9 +86,6 @@ int main(int argc, char *argv[])
                 case 't':
                     terse = true;
                     break;
-                case 'a':
-                    wide = true;
-                    break;
                 case 'F':
                     if(std::strcmp(optarg, "tree")==0) {
                         format = Value::Fmt::Tree;
@@ -98,7 +94,8 @@ int main(int argc, char *argv[])
                     } else if(std::strcmp(optarg, "value") == 0) {
                         format = Value::Fmt::Val;
                     } else {
-                        std::cerr<<"Warning: ignoring unknown format '"<<optarg<<"'\n";
+                        std::cerr<<"Unknown format type '"<<optarg<<"'\n";
+                        return 1;
                     }
                     break;
                 default:
@@ -106,18 +103,6 @@ int main(int argc, char *argv[])
                     std::cerr<<"\nUnknown argument: "<<char(opt)<<std::endl;
                     return 1;
                 }
-            }
-        }
-        
-        // Check for incompatible options
-        if (format != Value::Fmt::Val) {
-            if (wide) {
-                std::cerr << "-a (wide mode) can only be used with 'value' formatting mode\n";
-                return 1;
-            }
-            else if (terse) {
-                std::cerr << "-t (terse mode) can only be used with 'value' formatting mode\n";
-                return 1;
             }
         }
 
@@ -135,20 +120,18 @@ int main(int argc, char *argv[])
 
             ops.push_back(ctxt.get(argv[n])
                           .pvRequest(request)
-                          .result([&argv, n, &remaining, &done, wide, format, arrLimit, terse](client::Result&& result) {
+                          .result([&argv, n, &remaining, &done, format, arrLimit, terse](client::Result&& result) {
                               if (!terse) {
-                                // When in value mode, we want to display PV and value on the same line
                                 if (format != Value::Fmt::Val)
                                     std::cout << argv[n] << "\n";
-                                else
-                                    std::cout << std::setw(30) << std::left << argv[n] << " ";
                               }
 
                               Indented I(std::cout);
                               std::cout<<result()
                                          .format()
+                                         .name(argv[n])
                                          .format(format)
-                                         .wideMode(wide)
+                                         .terseMode(terse)
                                          .arrayLimit(arrLimit);
                               std::cout.flush();
 

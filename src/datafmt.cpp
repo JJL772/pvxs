@@ -335,28 +335,35 @@ struct FmtValue {
 
         char buf[128];
         epicsTimeToStrftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S.%06f", &ts);
-        stream<<buf<<" ";
+        stream << buf << " ";
     }
     
     /**
      * @brief Show alarms if status != NO_ALARM
+     * Will be in the format " SEVERITY COND [MSG ]", or "" if no alarm is present.
      */
     void maybe_show_alarms(const Value& field) {
+        int alarmCond = 0;
         auto alarmFld = field.lookup("alarm.status");
-        if (alarmFld && alarmFld.as<int32_t>() == 0)
+        if (alarmFld && (alarmCond = alarmFld.as<int32_t>()) == epicsAlarmNone)
             return;
+        alarmCond = clamp(alarmCond, firstEpicsAlarmCond, lastEpicsAlarmCond);
 
-        std::string msg{"INVALID"};
+        std::string msg;
         auto msgFld = field.lookup("alarm.message");
         if (msgFld && msgFld.type() == TypeCode::String)
             msg = msgFld.as<std::string>();
-        
+
         int sevr = epicsSevNone;
         auto alarmSevr = field.lookup("alarm.severity");
         if (alarmSevr)
             sevr = clamp(alarmSevr.as<int>(), firstEpicsAlarmSev, lastEpicsAlarmSev);
-        
-        stream << " " << msg << " " << epicsAlarmSeverityStrings[sevr];
+
+        stream << " " << epicsAlarmSeverityStrings[sevr]
+               << " " << epicsAlarmConditionStrings[alarmCond] << " ";
+
+        if (!msg.empty())
+            stream << msg << " ";
     }
 
     /**
@@ -426,34 +433,73 @@ struct FmtValue {
         }
         stream << array.castTo<const std::string>().at(index);
     }
+
+    /**
+     * \brief Shows the EGU of the field, if present.
+     */
+    void show_egu(const Value& field) {
+        auto egu = field.lookup("display.units");
+        if (!egu)
+            return;
+
+        auto msg = egu.as<std::string>();
+        if (!msg.empty())
+            stream << " " << msg << " ";
+    }
     
     /**
-     * @brief Shows a PV's value field and some other relevant fields
-     * What is shown changes based on the NT type
+     * \brief Shows a PV's value field and some other relevant fields.
+     * Displayed format is dependent on the underlying NT type.
+     *
+     * NTScalar:        <TIME> [NAME] <VALUE> [EGU] [ALARM]
+     *
+     * NTScalarArray:   <TIME> [NAME] [ALARM] <VALUE ...>
+     *
+     * NTTable:         <TIME> [NAME] [ALARM]
+     *                    <ROW1 ...>
+     *                    ...
+     *                    <ROWN ...>
+
      */
-    void show(const Value& field) {
+    void show(const std::string& name, const Value& field) {
         const bool isScalar = field.idStartsWith("epics:nt/NTScalar");
         const bool isEnum = field.idStartsWith("epics:nt/NTEnum");
+        const bool isArray = field.idStartsWith("epics:nt/NTScalarArray");
 
-        if (isScalar || isEnum) {
-            auto val = field.lookup("value");
-            if (!val)
-                return;
+        // Anything other than scalars is unsupported for now.
+        if (!isScalar && !isEnum && !isArray)
+            return;
 
-            if (fmt._wideMode)
-                show_timestamp(field);
+        auto val = field.lookup("value");
+        if (!val)
+            return;
 
-            // Display actual value field
-            if (isScalar)
-                show_value(val);
-            else if (isEnum)
-                show_enum_value(val);
-
-            if (fmt._wideMode)
-                maybe_show_alarms(field);
-                
+        // Terse mode shows only value and returns.
+        if (fmt._terseMode) {
+            show_value(val);
             stream << "\n";
+            return;
         }
+
+        show_timestamp(field);
+        stream << name << " ";
+
+        if (isScalar) {
+            // VALUE [EGU] [ALARM]
+            show_value(val);
+            show_egu(field);
+            maybe_show_alarms(field);
+        } else if (isEnum) {
+            // TODO: determine format
+            maybe_show_alarms(field);
+            show_value(val);
+        } else if (isArray) {
+            // [ALARM] VALUES...
+            maybe_show_alarms(field);
+            show_value(field);
+        }
+
+        stream << "\n";
     }
 };
 
@@ -470,7 +516,7 @@ std::ostream& operator<<(std::ostream& strm, const Value::Fmt& fmt)
         FmtDelta{strm, fmt}.top("", *fmt.top, true);
         break;
     case Value::Fmt::Val:
-        FmtValue{strm, fmt}.show(*fmt.top);
+        FmtValue{strm, fmt}.show(fmt._name, *fmt.top);
         break;
     default:
         strm<<"<Unknown Value format()>\n";

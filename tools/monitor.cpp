@@ -51,7 +51,6 @@ void usage(const char* argv0)
                "            Default: 20\n"
                "  -F <fmt>  Output format mode: delta, tree, value. Default: value\n"
                "  -t        Terse mode, only display value without name or type\n"
-               "  -a        Wide mode, display in \"name timestamp value stat sevr\" format\n"
                "\n"
                "Debug options:\n"
                "  -v        Make more noise.\n"
@@ -66,14 +65,14 @@ int main(int argc, char *argv[])
 {
     try {
         logger_config_env(); // from $PVXS_LOG
-        bool verbose = false, terse = false, wide = false;
+        bool verbose = false, terse = false;
         std::string request;
         Value::Fmt::format_t format = Value::Fmt::Val;
         auto arrLimit = uint64_t(-1);
 
         {
             int opt;
-            while ((opt = getopt(argc, argv, "athVvdr:#:F:")) != -1) {
+            while ((opt = getopt(argc, argv, "thVvdr:#:F:")) != -1) {
                 switch(opt) {
                 case 'h':
                     usage(argv[0]);
@@ -94,9 +93,6 @@ int main(int argc, char *argv[])
                 case '#':
                     arrLimit = parseTo<uint64_t>(optarg);
                     break;
-                case 'a':
-                    wide = true;
-                    break;
                 case 't':
                     terse = true;
                     break;
@@ -108,7 +104,8 @@ int main(int argc, char *argv[])
                     } else if(std::strcmp(optarg, "value") == 0) {
                         format = Value::Fmt::Val;
                     } else {
-                        std::cerr<<"Warning: ignoring unknown format '"<<optarg<<"'\n";
+                        std::cerr<<"Unknown format type '"<<optarg<<"'\n";
+                        return 1;
                     }
                     break;
                 default:
@@ -116,18 +113,6 @@ int main(int argc, char *argv[])
                     std::cerr<<"\nUnknown argument: "<<char(opt)<<std::endl;
                     return 1;
                 }
-            }
-        }
-
-        // Check for incompatible options
-        if (format != Value::Fmt::Val) {
-            if (wide) {
-                std::cerr << "-a (wide mode) can only be used with 'value' formatting mode\n";
-                return 1;
-            }
-            else if (terse) {
-                std::cerr << "-t (terse mode) can only be used with 'value' formatting mode\n";
-                return 1;
             }
         }
 
@@ -182,13 +167,11 @@ int main(int argc, char *argv[])
                 }
                 log_info_printf(app, "%s POP empty\n", name.c_str());
 
-                if (!terse)
-                    std::cout<<name<<"\n";
-
                 Indented I(std::cout);
                 std::cout<<update.format()
                            .format(format)
-                           .wideMode(wide)
+                           .terseMode(terse)
+                           .name(name)
                            .arrayLimit(arrLimit);
                 std::cout.flush();
 

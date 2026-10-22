@@ -778,6 +778,7 @@ public:
     //! Provides options to control printing of a Value via std::ostream.
     struct Fmt {
         const Value* top = nullptr;
+        std::string _name;
         size_t _limit=0u;
         enum format_t {
             Tree,
@@ -786,7 +787,7 @@ public:
         } _format = Tree;
         bool _showValue = true;
         bool _valueOnly = false;
-        bool _wideMode = false;
+        bool _terseMode = true;
 
         Fmt(const Value* top) :top(top) {}
         //! Show Value in tree/struct format
@@ -801,8 +802,10 @@ public:
         Fmt& arrayLimit(size_t cnt) { _limit = cnt; return *this; }
         //! Only display value
         Fmt& valueOnly(bool v) { _valueOnly = v; return *this; }
-        //! In Val mode, whether to display data in "timestamp value stat sevr" format
-        Fmt& wideMode(bool v) { _wideMode = v; return *this; }
+        //! When in value mode, whether to omit timestamp
+        Fmt& terseMode(bool v) { _terseMode = v; return *this; }
+        //! Sets the PV name
+        Fmt& name(const std::string& s) { _name = s; return *this; }
     };
     /** Configurable printing via std::ostream
      *
