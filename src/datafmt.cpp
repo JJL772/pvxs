@@ -3,6 +3,7 @@
  * pvxs is distributed subject to a Software License Agreement found
  * in file LICENSE that is included with this distribution.
  */
+#include <iomanip>
 
 #include "dataimpl.h"
 
@@ -323,23 +324,28 @@ static constexpr const char* pvaAlarmStatusStrings[NUM_PVA_ALARM_STATUSES] = {
 };
 
 /** 
- * @brief Display name+value only, not the full structure
+ * \brief Display name+value only, not the full structure
  */
 struct FmtValue {
     std::ostream& stream;
     const Value::Fmt& fmt;
     
     /**
-     * @brief Display timestamp
+     * \brief Display timestamp, or <undefined> if none.
      */
     void show_timestamp(const Value& field) {
         epicsTimeStamp ts = {};
         timespec tv = {};
 
-        auto secsField = field.lookup("timeStamp.secondsPastEpoch");
-        if (secsField)
+        auto secsField = field["timeStamp.secondsPastEpoch"];
+        if (secsField.valid()) {
             tv.tv_sec = secsField.as<int64_t>();
-        auto nsecsField = field.lookup("timeStamp.nanoseconds");
+        } else {
+            stream << "<undefined> ";
+            return; // Nothing to show
+        }
+
+        auto nsecsField = field["timeStamp.nanoseconds"];
         if (nsecsField)
             tv.tv_nsec = nsecsField.as<int32_t>();
 
@@ -351,7 +357,7 @@ struct FmtValue {
     }
     
     /**
-     * @brief Show alarms if status != NO_ALARM
+     * \brief Show alarms if status != NO_ALARM
      * Will be in the format " SEVERITY COND [MSG ]", or "" if no alarm is present.
      */
     void maybe_show_alarms(const Value& field) {
@@ -379,9 +385,11 @@ struct FmtValue {
     }
 
     /**
-     * @brief Show a simple scalar or array value
+     * \brief Show a simple scalar or array value
      */
-    void show_value(const Value& field) {
+    void show_value(const Value& field, std::ostream* mystream = nullptr) {
+        std::ostream& stream = mystream ? *mystream : this->stream;
+
         switch(field.type().code) {
         case TypeCode::Bool:
             stream << field.as<bool>();
@@ -422,16 +430,57 @@ struct FmtValue {
             break;
         }
     }
-    
+
+    template<typename T>
+    T cast(const shared_array<const void>& arr, size_t i) {
+        return reinterpret_cast<const T*>(arr.data())[i];
+    }
+
+    void show_array_value(const shared_array<const void>& arr, size_t i, std::ostream* mystream = nullptr) {
+        std::ostream& stream = mystream ? *mystream : this->stream;
+
+        switch (arr.original_type()) {
+        case ArrayType::Null:
+            break;
+        case ArrayType::Bool:
+            stream << cast<bool>(arr, i); break;
+        case ArrayType::Int8:
+            stream << cast<int8_t>(arr, i); break;
+        case ArrayType::Int16:
+            stream << cast<int16_t>(arr, i); break;
+        case ArrayType::Int32:
+            stream << cast<int32_t>(arr, i); break;
+        case ArrayType::Int64:
+            stream << cast<int64_t>(arr, i); break;
+        case ArrayType::UInt8:
+            stream << cast<uint8_t>(arr, i); break;
+        case ArrayType::UInt16:
+            stream << cast<uint16_t>(arr, i); break;
+        case ArrayType::UInt32:
+            stream << cast<uint32_t>(arr, i); break;
+        case ArrayType::UInt64:
+            stream << cast<uint64_t>(arr, i); break;
+        case ArrayType::Float32:
+            stream << cast<float>(arr, i); break;
+        case ArrayType::Float64:
+            stream << cast<double>(arr, i); break;
+        case ArrayType::String:
+            stream << cast<std::string>(arr, i); break;
+        case ArrayType::Value:
+            show_value(arr.castTo<const Value>().at(i));
+            break;
+        }
+    }
+
     /**
-     * @brief Show an enum value (string)
+     * \brief Show an enum value (string)
      */
     void show_enum_value(const Value& field) {
         auto indexField = field.lookup("index");
         if (!indexField || indexField.type().kind() != Kind::Integer)
             return;
         auto index = indexField.as<int32_t>();
-        
+
         auto choices = field.lookup("choices");
         if (!choices || choices.type() != TypeCode::StringA) {
             stream << index;
@@ -444,6 +493,85 @@ struct FmtValue {
             return;
         }
         stream << array.castTo<const std::string>().at(index);
+    }
+
+    /**
+     * \brief Display a table with labels as column headers.
+     * This prints the table in a human readable manner and is much less efficient
+     * than a non-pretty printer for i.e. CSV formatted prints.
+     */
+    void show_table_human(const Value& field) {
+        auto labelsField = field["labels"];
+        if (!labelsField.valid())
+            return;
+        auto labels = labelsField.as<shared_array<const void>>()
+                                 .castTo<const std::string>();
+
+        auto value = field["value"];
+
+        std::vector<shared_array<const void>> valueCols;
+        valueCols.reserve(labels.size());
+
+        std::vector<size_t> colWidths;
+        colWidths.reserve(labels.size());
+
+        size_t nrows = 0;
+
+        // Collect the label widths and grab columns of values.
+        for (const auto& label : labels) {
+            colWidths.push_back(label.size()+1);
+
+            if (value.valid()) {
+                valueCols.push_back(value[label].as<shared_array<const void>>());
+                nrows = std::max(nrows, valueCols.back().size());
+            }
+        }
+
+        // TODO: This kind of sucks, figure out a better algorithm.
+        std::vector<std::stringstream> converted;
+        converted.resize(nrows * valueCols.size());
+
+        // Pass 1: Bulk conversion of values to strings
+        for (size_t row = 0; row < nrows; ++row) {
+            for (size_t col = 0; col < valueCols.size(); ++col) {
+                const auto& valueCol = valueCols[col];
+                if (row < valueCol.size()) {
+                    std::ostream& mystream = converted[row * valueCols.size() + col];
+                    show_array_value(valueCol, row, &mystream);
+
+                    // Account for additional column spacing for column 1 and onwards.
+                    size_t rowWidth = size_t(mystream.tellp()) + (col == 0U ? 0 : 1);
+
+                    colWidths[col] = std::max(rowWidth, colWidths[col]);
+                }
+            }
+        }
+
+        // Print the labels now (with widths)
+        for (size_t col = 0; col < labels.size(); col++) {
+            stream << std::setw(colWidths[col]) << std::right;
+            stream << labels[col];
+        }
+        stream << "\n";
+
+        // "Pretty" printing, with the widths we calculated.
+        for (size_t row = 0; row < nrows; ++row) {
+            for (size_t col = 0; col < valueCols.size(); ++col) {
+                const auto& valueCol = valueCols[col];
+                stream << std::setw(colWidths[col]) << std::right;
+
+                if (row < valueCol.size()) {
+                    show_array_value(valueCol, row);
+                } else {
+                    // if we've run out of values in this column, print spaces.
+                    stream << " ";
+                }
+            }
+
+            // We add a newline later for the final row.
+            if (row+1 != nrows)
+                stream << "\n";
+        }
     }
 
     /**
@@ -477,9 +605,10 @@ struct FmtValue {
         const bool isScalar = field.idStartsWith("epics:nt/NTScalar");
         const bool isEnum = field.idStartsWith("epics:nt/NTEnum");
         const bool isArray = field.idStartsWith("epics:nt/NTScalarArray");
+        const bool isTable = field.idStartsWith("epics:nt/NTTable");
 
         // Anything other than scalars is unsupported for now.
-        if (!isScalar && !isEnum && !isArray)
+        if (!isScalar && !isEnum && !isArray && !isTable)
             return;
 
         auto val = field.lookup("value");
@@ -509,6 +638,10 @@ struct FmtValue {
             // [ALARM] VALUES...
             maybe_show_alarms(field);
             show_value(field);
+        } else if (isTable) {
+            maybe_show_alarms(field);
+            stream << "\n";
+            show_table_human(field);
         }
 
         stream << "\n";
