@@ -336,6 +336,7 @@ struct FmtValue {
     void show_timestamp(const Value& field) {
         epicsTimeStamp ts = {};
         timespec tv = {};
+        tm tm = {};
 
         auto secsField = field["timeStamp.secondsPastEpoch"];
         if (secsField.valid()) {
@@ -346,14 +347,22 @@ struct FmtValue {
         }
 
         auto nsecsField = field["timeStamp.nanoseconds"];
-        if (nsecsField)
+        if (nsecsField) {
             tv.tv_nsec = nsecsField.as<int32_t>();
+        }
 
         epicsTimeFromTimespec(&ts, &tv);
 
-        char buf[128];
-        epicsTimeToStrftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S.%03f", &ts);
-        stream << buf << " ";
+        if (localtime_r(&tv.tv_sec, &tm)) {
+            char buf[128];
+            strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);
+            // Print the fractional part of the second.
+            stream << buf << "." 
+                << std::setfill('0') << std::setw(3) << uint64_t(tv.tv_nsec / 1e6)
+                << " ";
+        } else {
+            stream << "<unknown> ";
+        }
     }
     
     /**
@@ -428,6 +437,15 @@ struct FmtValue {
             stream << field.as<shared_array<const void>>().format()
                 .limit(fmt._limit);
             break;
+        case TypeCode::Null:
+            break;
+        case TypeCode::Struct:
+        case TypeCode::Union:
+        case TypeCode::Any:
+        case TypeCode::StructA:
+        case TypeCode::UnionA:
+        case TypeCode::AnyA:
+            break; // TODO!!
         }
     }
 
