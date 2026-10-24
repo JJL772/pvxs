@@ -494,23 +494,24 @@ struct FmtValue {
      * \brief Show an enum value (string)
      */
     void show_enum_value(const Value& field) {
-        auto indexField = field.lookup("index");
-        if (!indexField || indexField.type().kind() != Kind::Integer)
+        auto indexField = field["value.index"];
+        if (!indexField.valid() || indexField.type().kind() != Kind::Integer)
             return;
         auto index = indexField.as<int32_t>();
 
-        auto choices = field.lookup("choices");
-        if (!choices || choices.type() != TypeCode::StringA) {
+        auto choices = field["value.choices"];
+        if (!choices.valid() || choices.type() != TypeCode::StringA) {
             stream << index;
             return;
         }
 
         auto array = choices.as<shared_array<const void>>();
         if (index < 0 || size_t(index) >= array.size()) {
-            stream << "";
+            stream << "<invalid choice>";
             return;
         }
-        stream << array.castTo<const std::string>().at(index);
+        stream << "(" << index << ") " 
+            << array.castTo<const std::string>().at(index);
     }
 
     /**
@@ -649,7 +650,7 @@ struct FmtValue {
             show_egu(field);
             maybe_show_alarms(field);
         } else if (isEnum) {
-            // TODO: determine format
+            show_enum_value(field);
             maybe_show_alarms(field);
             show_value(val);
         } else if (isArray) {
